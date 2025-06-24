@@ -10,12 +10,13 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import warnings
+from datetime import datetime
+import logging
 try:
     from config import logger
 except ImportError:
-    import logging
     logger = logging.getLogger(__name__)
 
 # 設置中文字體
@@ -327,8 +328,11 @@ class MatplotlibCharts:
         try:
             # 只選擇數值列
             numeric_cols = data.select_dtypes(include=[np.number]).columns
-            correlation_data = data[numeric_cols].corr()
-            
+            numeric_df = data[numeric_cols]
+            if not numeric_df.empty:
+                correlation_data = numeric_df.corr()
+            else:
+                correlation_data = pd.DataFrame()
             fig, ax = plt.subplots(figsize=(12, 10))
             
             # 創建熱力圖
@@ -537,7 +541,6 @@ def create_interactive_dashboard(stock_data: pd.DataFrame, symbol: str) -> str:
         生成的儀表板文件路徑
     """
     try:
-        from datetime import datetime
         import os
         
         # 生成儀表板HTML
@@ -578,4 +581,95 @@ def create_interactive_dashboard(stock_data: pd.DataFrame, symbol: str) -> str:
         
     except Exception as e:
         logger.error(f"儀表板生成失敗: {e}")
-        return "" 
+        return ""
+
+def plot_results(
+    data: pd.DataFrame,
+    signals: pd.Series,
+    params: Dict[str, Any],
+    save_path: Optional[str] = None
+) -> None:
+    """繪製策略結果圖表"""
+    try:
+        # 設置繪圖樣式
+        sns.set_theme(style="darkgrid")
+        
+        # 創建圖表
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), height_ratios=[2, 1])
+        fig.suptitle(f"策略回測結果 - {params['strategy_type']}", fontsize=16)
+        
+        # 繪製價格和信號
+        ax1.plot(data['date'], data['close'], label='收盤價', color='blue', alpha=0.7)
+        
+        # 標記買入和賣出點
+        buy_signals = signals == 1
+        sell_signals = signals == -1
+        
+        if buy_signals.any():
+            ax1.scatter(
+                data.loc[buy_signals, 'date'],
+                data.loc[buy_signals, 'close'],
+                marker='^',
+                color='green',
+                s=100,
+                label='買入信號'
+            )
+            
+        if sell_signals.any():
+            ax1.scatter(
+                data.loc[sell_signals, 'date'],
+                data.loc[sell_signals, 'close'],
+                marker='v',
+                color='red',
+                s=100,
+                label='賣出信號'
+            )
+            
+        # 設置第一個子圖的標籤和格式
+        ax1.set_title('價格和交易信號')
+        ax1.set_xlabel('日期')
+        ax1.set_ylabel('價格')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # 繪製技術指標
+        if params['strategy_type'] == 'RSI':
+            # 計算RSI
+            delta = data['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=params['period']).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=params['period']).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # 繪製RSI
+            ax2.plot(data['date'], rsi, label='RSI', color='purple', alpha=0.7)
+            ax2.axhline(y=params['overbought'], color='r', linestyle='--', alpha=0.5)
+            ax2.axhline(y=params['oversold'], color='g', linestyle='--', alpha=0.5)
+            ax2.fill_between(
+                data['date'],
+                params['overbought'],
+                params['oversold'],
+                alpha=0.1,
+                color='gray'
+            )
+            
+            # 設置第二個子圖的標籤和格式
+            ax2.set_title('RSI 指標')
+            ax2.set_xlabel('日期')
+            ax2.set_ylabel('RSI')
+            ax2.set_ylim(0, 100)
+            ax2.grid(True)
+            
+        # 調整布局
+        plt.tight_layout()
+        
+        # 保存或顯示圖表
+        if save_path:
+            plt.savefig(save_path)
+            logger.info(f"✅ 圖表已保存至: {save_path}")
+        else:
+            plt.show()
+            
+    except Exception as e:
+        logger.error(f"❌ 繪圖失敗: {str(e)}")
+        raise 

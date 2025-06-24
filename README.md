@@ -187,6 +187,29 @@ python run_analysis.py
 - 📊 多策略回測系統
 - 📈 基本圖表生成
 
+## 📌 統一主入口 main.py 使用說明
+
+本系統已整合所有主流程，請直接使用 `main.py` 啟動分析：
+
+### 運行模式
+- `--mode analysis`：單一標的互動式量化分析（含選單、報表、儀表板）
+- `--mode brute`：技術指標暴力搜尋（自動化參數窮舉與回測）
+- `--mode all`：多策略整合優化（自動化批次優化與 Dashboard 啟動）
+
+### 執行範例
+```bash
+python main.py --mode analysis   # 啟動互動式單一標的分析
+python main.py --mode brute      # 啟動技術指標暴力搜尋
+python main.py --mode all        # 啟動多策略整合優化
+```
+
+### 注意事項
+- 請確保已安裝所有依賴：`pip install -r requirements.txt`
+- Dashboard 啟動後，請於瀏覽器開啟 http://127.0.0.1:8050 或 http://127.0.0.1:8051
+- 若遇到模組導入錯誤，請檢查 Python 路徑與依賴安裝狀態。
+
 ---
+
+如需進階自動化或批次分析，建議直接以 main.py 統一入口執行，可大幅簡化操作流程。
 
 🏦 **港股量化分析系統** - 專業的港股投資分析工具 

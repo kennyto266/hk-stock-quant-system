@@ -20,7 +20,7 @@ warnings.filterwarnings('ignore')
 
 # 導入原有策略模組
 from north_south_flow_strategies import NorthSouthFlowStrategies
-from data_handler import DataFetcher
+from data_handler import DataFetcher, TechnicalIndicators
 
 class IntegratedStrategiesWithNorthSouth:
     def __init__(self, symbol="2800.HK"):
@@ -70,35 +70,6 @@ class IntegratedStrategiesWithNorthSouth:
         rsi = 100 - (100 / (1 + rs))
         return rsi
     
-    def calculate_macd(self, prices, fast=12, slow=26, signal=9):
-        """計算MACD指標"""
-        ema_fast = prices.ewm(span=fast).mean()
-        ema_slow = prices.ewm(span=slow).mean()
-        macd_line = ema_fast - ema_slow
-        signal_line = macd_line.ewm(span=signal).mean()
-        histogram = macd_line - signal_line
-        return macd_line, signal_line, histogram
-    
-    def calculate_bollinger_bands(self, prices, period=20, std_dev=2):
-        """計算布林帶"""
-        sma = prices.rolling(window=period).mean()
-        std = prices.rolling(window=period).std()
-        upper_band = sma + (std * std_dev)
-        lower_band = sma - (std * std_dev)
-        return upper_band, sma, lower_band
-    
-    def calculate_kdj(self, high, low, close, k_period=9, d_period=3, smooth_k=3):
-        """計算KDJ指標"""
-        lowest_low = low.rolling(window=k_period).min()
-        highest_high = high.rolling(window=k_period).max()
-        
-        rsv = 100 * (close - lowest_low) / (highest_high - lowest_low)
-        k = rsv.ewm(span=smooth_k).mean()
-        d = k.ewm(span=d_period).mean()
-        j = 3 * k - 2 * d
-        
-        return k, d, j
-    
     def traditional_rsi_strategy(self, stock_data):
         """傳統RSI策略"""
         data = stock_data.copy()
@@ -108,7 +79,7 @@ class IntegratedStrategiesWithNorthSouth:
         data.loc[data['rsi'] < 30, 'signal'] = 1  # 超賣買入
         data.loc[data['rsi'] > 70, 'signal'] = -1  # 超買賣出
         
-        data['position'] = data['signal'].replace(to_replace=0, method='ffill').fillna(0)
+        data['position'] = data['signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         data['returns'] = data['Close'].pct_change()
         data['strategy_returns'] = data['position'].shift(1) * data['returns']
         
@@ -117,7 +88,7 @@ class IntegratedStrategiesWithNorthSouth:
     def traditional_macd_strategy(self, stock_data):
         """傳統MACD策略"""
         data = stock_data.copy()
-        macd, signal, histogram = self.calculate_macd(data['Close'])
+        macd, signal, histogram = TechnicalIndicators.calculate_macd(data['Close'])
         data['macd'] = macd
         data['macd_signal'] = signal
         data['macd_histogram'] = histogram
@@ -130,7 +101,7 @@ class IntegratedStrategiesWithNorthSouth:
         data.loc[(data['macd'] < data['macd_signal']) & 
                  (data['macd'].shift(1) >= data['macd_signal'].shift(1)), 'signal'] = -1
         
-        data['position'] = data['signal'].replace(to_replace=0, method='ffill').fillna(0)
+        data['position'] = data['signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         data['returns'] = data['Close'].pct_change()
         data['strategy_returns'] = data['position'].shift(1) * data['returns']
         
@@ -139,7 +110,7 @@ class IntegratedStrategiesWithNorthSouth:
     def bollinger_bands_strategy(self, stock_data):
         """布林帶策略"""
         data = stock_data.copy()
-        bb_upper, bb_middle, bb_lower = self.calculate_bollinger_bands(data['Close'])
+        bb_upper, bb_middle, bb_lower = TechnicalIndicators.calculate_bollinger_bands(data['Close'])
         data['bb_upper'] = bb_upper
         data['bb_middle'] = bb_middle
         data['bb_lower'] = bb_lower
@@ -148,7 +119,7 @@ class IntegratedStrategiesWithNorthSouth:
         data.loc[data['Close'] < data['bb_lower'], 'signal'] = 1  # 價格觸及下軌買入
         data.loc[data['Close'] > data['bb_upper'], 'signal'] = -1  # 價格觸及上軌賣出
         
-        data['position'] = data['signal'].replace(to_replace=0, method='ffill').fillna(0)
+        data['position'] = data['signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         data['returns'] = data['Close'].pct_change()
         data['strategy_returns'] = data['position'].shift(1) * data['returns']
         
@@ -157,7 +128,7 @@ class IntegratedStrategiesWithNorthSouth:
     def kdj_strategy(self, stock_data):
         """KDJ策略"""
         data = stock_data.copy()
-        k, d, j = self.calculate_kdj(data['High'], data['Low'], data['Close'])
+        k, d, j = TechnicalIndicators.calculate_kdj(data['High'], data['Low'], data['Close'])
         data['k'] = k
         data['d'] = d
         data['j'] = j
@@ -166,7 +137,7 @@ class IntegratedStrategiesWithNorthSouth:
         data.loc[(data['k'] < 20) & (data['d'] < 20), 'signal'] = 1  # 超賣買入
         data.loc[(data['k'] > 80) & (data['d'] > 80), 'signal'] = -1  # 超買賣出
         
-        data['position'] = data['signal'].replace(to_replace=0, method='ffill').fillna(0)
+        data['position'] = data['signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         data['returns'] = data['Close'].pct_change()
         data['strategy_returns'] = data['position'].shift(1) * data['returns']
         
@@ -217,7 +188,7 @@ class IntegratedStrategiesWithNorthSouth:
         combined.loc[combined['weighted_signal'] > 0.5, 'final_signal'] = 1
         combined.loc[combined['weighted_signal'] < -0.5, 'final_signal'] = -1
         
-        combined['position'] = combined['final_signal'].replace(to_replace=0, method='ffill').fillna(0)
+        combined['position'] = combined['final_signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         combined['returns'] = stock_aligned['returns']
         combined['strategy_returns'] = combined['position'].shift(1) * combined['returns']
         

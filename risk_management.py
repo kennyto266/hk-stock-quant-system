@@ -6,8 +6,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-import logging
-from .config import RISK_CONFIG, logger
+from config import RISK_CONFIG, logger
 
 class RiskMetrics:
     """組合風險度量類"""

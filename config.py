@@ -3,53 +3,109 @@
 包含所有系統配置類和常數定義
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import logging
+import os
+from datetime import datetime, timedelta
 
 # 設置日誌
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('股票分析系統.log', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-@dataclass
 class SystemConfig:
-    """系統配置類"""
-    # 數據獲取配置
-    data_start_date: str = "2024-01-01"  # 數據開始日期（縮短時間範圍）
-    data_end_date: str = "2024-06-21"    # 數據結束日期
-    data_retry_attempts: int = 3         # 數據獲取重試次數
-    data_retry_delay: int = 5           # 重試延遲（秒）
+    """配置類"""
     
-    # 止損止盈配置
-    enable_stop_loss: bool = True
-    stop_loss_pct: float = 0.05  # 5%止損
-    enable_take_profit: bool = True
-    take_profit_pct: float = 0.10  # 10%止盈
-    trailing_stop: bool = True
-    trailing_stop_pct: float = 0.03  # 3%追蹤止損
+    def __init__(self):
+        # 數據時間範圍
+        self.data_start_date = "2020-01-01"  # 開始日期
+        self.data_end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")  # 結束日期（昨天）
+        
+        # 訓練參數
+        self.train_test_split = 0.7  # 訓練集比例
+        self.validation_days = 252  # 驗證天數（約一年）
+        
+        # 技術指標參數
+        self.rsi_period = 14  # RSI週期
+        self.rsi_overbought = 70  # RSI超買閾值
+        self.rsi_oversold = 30  # RSI超賣閾值
+        
+        # 風險管理參數
+        self.stop_loss = 0.05  # 止損比例
+        self.take_profit = 0.10  # 止盈比例
+        self.max_positions = 5  # 最大持倉數量
+        
+        # 資金管理參數
+        self.initial_capital = 1000000  # 初始資金
+        self.position_size = 0.2  # 每個倉位佔總資金比例
+        
+        # 數據存儲路徑
+        self.data_dir = "stock_data"  # 數據存儲目錄
+        self.output_dir = "output"  # 輸出目錄
+        
+        # 創建必要的目錄
+        for directory in [self.data_dir, self.output_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+
+@dataclass
+class NonPriceDataConfig:
+    """非價格數據配置"""
+    # 期貨數據配置
+    enable_futures_data: bool = True
+    futures_update_interval: int = 300  # 5分鐘更新
+    futures_lookback_days: int = 30     # 期貨數據回看天數
     
-    # 風險管理配置
-    max_position_size: float = 0.2  # 單策略最大倉位20%
-    max_portfolio_risk: float = 0.15  # 組合最大風險15%
-    correlation_threshold: float = 0.7  # 相關性閾值
+    # 市場情緒配置
+    enable_sentiment_analysis: bool = True
+    sentiment_sources: List[str] = field(default_factory=lambda: ['news', 'social_media', 'options'])
     
-    # 多線程配置
-    max_workers: int = 8  # 最大線程數（發揮9950X3D性能）
+    # 宏觀數據配置
+    enable_macro_data: bool = True
+    macro_indicators: List[str] = field(default_factory=lambda: ['interest_rate', 'exchange_rate', 'vix'])
     
-    # 自動化配置
-    auto_update_enabled: bool = True
-    update_interval_hours: int = 4  # 4小時更新一次
-    auto_report_enabled: bool = True
-    report_time: str = "09:00"  # 每天9點生成報告
-  # 每天9點生成報告
-  # 每日9點生成報告
+    # 數據融合配置
+    correlation_threshold: float = 0.3
+    feature_selection_method: str = 'mutual_info'
+    max_features: int = 50
+    
+    # 香港期貨配置
+    hk_futures_symbols: Dict[str, str] = field(default_factory=lambda: {
+        'HSI_DAY': '^HSI',      # 恆指日間期貨
+        'HSI_NIGHT': 'HSI2300', # 恆指夜間期貨
+        'HSCEI': '^HSCE',       # 國企指數期貨
+        'HSTECH': '^HSTECH'     # 恆生科技指數期貨
+    })
+    
+    # 股票數據批量下載配置
+    hk_stocks_universe: Dict[str, str] = field(default_factory=lambda: {
+        '2800.HK': '盈富基金',
+        '0700.HK': '騰訊控股', 
+        '0941.HK': '中國移動',
+        '1299.HK': '友邦保險',
+        '1398.HK': '工商銀行',
+        '3988.HK': '中國銀行',
+        '0005.HK': '匯豐控股',
+        '1109.HK': '華潤置地',
+        '2388.HK': '中銀香港',
+        '3968.HK': '招商銀行',
+        '2318.HK': '中國平安',
+        '6862.HK': '海底撈',
+        '9988.HK': '阿里巴巴',
+        '9618.HK': '京東集團',
+        '3690.HK': '美團',
+        '1024.HK': '快手',
+        '2269.HK': '藥明生物',
+        '1810.HK': '小米集團',
+        '9999.HK': '網易'
+    })
+    
+    # 批量下載配置
+    download_delay_seconds: float = 1.0
+    default_lookback_days: int = 730  # 默認2年數據
 
 @dataclass
 class RiskConfig:
@@ -112,6 +168,7 @@ BACKTEST_CONFIG = BacktestConfig()
 DISPLAY_CONFIG = DisplayConfig()
 TECHNICAL_CONFIG = TechnicalConfig()
 
+NON_PRICE_CONFIG = NonPriceDataConfig()
 # 套件可用性檢查
 def check_package_availability():
     """檢查套件可用性"""
@@ -168,3 +225,8 @@ def check_package_availability():
 
 # 檢查套件可用性
 PACKAGE_AVAILABILITY = check_package_availability() 
+
+# 創建必要的目錄
+for directory in [CONFIG.data_dir, CONFIG.output_dir]:
+    if not os.path.exists(directory):
+        os.makedirs(directory) 

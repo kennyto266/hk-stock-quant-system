@@ -8,8 +8,8 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 from scipy.optimize import minimize
 import warnings
-from .config import logger
-from .risk_management import RiskMetrics
+from config import logger
+from risk_management import RiskMetrics
 
 warnings.filterwarnings('ignore')
 

@@ -18,6 +18,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import warnings
+from data_handler import TechnicalIndicators
 warnings.filterwarnings('ignore')
 
 class NorthSouthFlowStrategies:
@@ -214,24 +215,6 @@ class NorthSouthFlowStrategies:
         except Exception as e:
             return []
     
-    def calculate_rsi(self, prices, period=14):
-        """計算RSI指標"""
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-    
-    def calculate_macd(self, prices, fast=12, slow=26, signal=9):
-        """計算MACD指標"""
-        ema_fast = prices.ewm(span=fast).mean()
-        ema_slow = prices.ewm(span=slow).mean()
-        macd_line = ema_fast - ema_slow
-        signal_line = macd_line.ewm(span=signal).mean()
-        histogram = macd_line - signal_line
-        return macd_line, signal_line, histogram
-    
     def calculate_north_south_indicators(self, ns_data):
         """計算南北水技術指標"""
         print("🔢 計算南北水技術指標...")
@@ -303,7 +286,7 @@ class NorthSouthFlowStrategies:
         market_df.loc[market_df['ns_rsi'] > rsi_overbought, 'signal'] = -1  # 超買賣出
         
         # 計算持倉
-        market_df['position'] = market_df['signal'].replace(to_replace=0, method='ffill').fillna(0)
+        market_df['position'] = market_df['signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         
         # 計算收益（假設下一日開盤價買入）
         market_df['returns'] = market_df['ns_turnover_change'].shift(-1)
@@ -331,7 +314,7 @@ class NorthSouthFlowStrategies:
                      (market_df['ns_macd'].shift(1) >= market_df['ns_macd_signal'].shift(1)), 'signal'] = -1
         
         # 計算持倉
-        market_df['position'] = market_df['signal'].replace(to_replace=0, method='ffill').fillna(0)
+        market_df['position'] = market_df['signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         
         # 計算收益
         market_df['returns'] = market_df['ns_turnover_change'].shift(-1)
@@ -369,7 +352,7 @@ class NorthSouthFlowStrategies:
         market_df.loc[(market_df['signal'] == -1) & (market_df['macd_signal'] == -1), 'combined_signal'] = -1
         
         # 計算持倉
-        market_df['position'] = market_df['combined_signal'].replace(to_replace=0, method='ffill').fillna(0)
+        market_df['position'] = market_df['combined_signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         
         # 計算收益
         market_df['returns'] = market_df['ns_turnover_change'].shift(-1)
@@ -455,7 +438,7 @@ class NorthSouthFlowStrategies:
         comprehensive_df.loc[comprehensive_df['signal_strength'] < -0.3, 'final_signal'] = -1
         
         # 計算持倉
-        comprehensive_df['position'] = comprehensive_df['final_signal'].replace(to_replace=0, method='ffill').fillna(0)
+        comprehensive_df['position'] = comprehensive_df['final_signal'].replace(0, np.nan).fillna(method='ffill').fillna(0)
         
         # 使用主要市場的收益作為基準
         main_market_returns = market_signals[base_market]['turnover_change']
@@ -715,6 +698,7 @@ class NorthSouthFlowStrategies:
 def main():
     """示例：運行南北水策略"""
     try:
+
         # 初始化策略
         strategy = NorthSouthFlowStrategies()
         
@@ -773,8 +757,11 @@ def main():
         else:
             print("❌ 無法生成權益曲線")
     
+            return True
+        
     except Exception as e:
         print(f"❌ 運行策略時出錯: {str(e)}")
+        return False
 
 if __name__ == "__main__":
     main() 

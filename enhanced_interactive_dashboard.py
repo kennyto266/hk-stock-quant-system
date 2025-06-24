@@ -33,6 +33,7 @@ from functools import wraps
 from numbers import Number
 import random
 from collections import defaultdict
+from visualization import create_interactive_dashboard
 
 # 定義類型
 class DashOption(TypedDict):
@@ -213,17 +214,13 @@ def get_data() -> pd.DataFrame:
         # 設置日期範圍
         end_date = datetime.now()
         start_date = end_date - timedelta(days=365)
-        
         # 獲取數據
         df = get_stock_data(SYMBOL, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-        
         # 保存數據到本地
         csv_file = os.path.join(CSV_PATH, f"{SYMBOL.replace('.', '_')}_stock_data.csv")
         df.to_csv(csv_file)
         logger.info(f"數據已保存到本地: {csv_file}")
-        
         return df
-        
     except Exception as e:
         logger.error(f"加載股票數據時發生錯誤: {str(e)}")
         # 嘗試從本地加載數據
@@ -236,12 +233,12 @@ def get_data() -> pd.DataFrame:
                 # 確保df是DataFrame類型
                 assert isinstance(df, pd.DataFrame), "讀取的數據不是DataFrame類型"
                 logger.info(f"使用本地CSV數據，形狀: {df.shape}")
+                return df
             else:
-                return {}, "無法獲取股票數據", {}
-        
+                raise RuntimeError("無法獲取股票數據")
         except Exception as local_e:
             logger.error(f"從本地加載數據也失敗: {str(local_e)}")
-        raise e
+            raise RuntimeError("無法獲取股票數據") from local_e
 
 # 確保輸出目錄存在
 def ensure_directories() -> None:
@@ -332,153 +329,57 @@ TABLE_CELL_STYLE = {
 }
 
 def generate_strategy_equity_curve(df, strategy_type):
-    """生成高波動性的策略權益曲線 (Equity Curve) - 標準化為起始值100"""
-    actual_prices = df['Close'].values
-    dates = df.index
-    n = len(dates)
-    
-    # 計算股價日收益率
-    stock_returns = np.zeros(n)
-    for i in range(1, n):
-        stock_returns[i] = (actual_prices[i] - actual_prices[i-1]) / actual_prices[i-1]
-    
-    # 設定隨機種子以確保一致性
-    np.random.seed(42)
-    
-    if strategy_type == 'rsi_strategy':
-        # RSI策略：高波動逆向交易策略
-        strategy_returns = np.zeros(n)
+    """
+    根據信號與價格計算真實權益曲線
+    """
+    try:
+        # 假設信號已經在 df 中，欄位名為 f'{strategy_type}_signal'
+        signal_col = f'{strategy_type}_signal'
+        if signal_col not in df.columns or 'Close' not in df.columns:
+            logger.error(f"缺少必要欄位: {signal_col} 或 Close")
+            return np.full(len(df), 100.0)
         
-        for i in range(1, n):
-            base_return = stock_returns[i]
-            
-            # RSI策略信號生成（高波動版本）
-            if i >= 5:
-                recent_trend = np.mean(stock_returns[i-4:i+1])
-                if recent_trend > 0.01:  # 模擬超買信號
-                    position = -0.8  # 大幅減倉
-                elif recent_trend < -0.01:  # 模擬超賣信號
-                    position = 2.0  # 大幅加倉
-                else:
-                    position = 1.0  # 正常持倉
-            else:
-                position = 1.0
-            
-            # 增加高頻波動性
-            high_vol_noise = np.random.normal(0, 0.012)  # 大幅增加噪聲
-            momentum_factor = np.sin(i * 0.3) * 0.008    # 高頻動量
-            reversal_factor = np.cos(i * 0.1) * 0.005    # 反轉因子
-            
-            strategy_returns[i] = position * base_return * 1.5 + high_vol_noise + momentum_factor + reversal_factor
-        
-    elif strategy_type == 'macd_strategy':
-        # MACD策略：中高波動趨勢跟隨策略
-        strategy_returns = np.zeros(n)
-        
-        for i in range(1, n):
-            base_return = stock_returns[i]
-            
-            # MACD策略信號（高波動版本）
-            if i >= 12:
-                short_ma = np.mean(stock_returns[i-5:i+1])
-                long_ma = np.mean(stock_returns[i-12:i+1])
-                macd_signal = short_ma - long_ma
-                
-                if macd_signal > 0.002:  # 買入信號（更敏感）
-                    position = 1.8
-                elif macd_signal < -0.002:  # 賣出信號（更敏感）
-                    position = 0.2
-                else:
-                    position = 1.0
-            else:
-                position = 1.0
-            
-            # 增加波動性
-            trend_noise = np.random.normal(0, 0.009)
-            cycle_factor = np.sin(i * 0.15) * 0.006
-            lag_factor = np.cos(i * 0.08) * 0.003
-            
-            strategy_returns[i] = position * base_return * 1.2 + trend_noise + cycle_factor + lag_factor
-        
-    elif strategy_type == 'ma_strategy':
-        # 移動平均策略：中波動策略
-        strategy_returns = np.zeros(n)
-        
-        for i in range(1, n):
-            base_return = stock_returns[i]
-            
-            # 移動平均策略信號（增加波動）
-            if i >= 20:
-                short_ma = np.mean(actual_prices[i-9:i+1])
-                long_ma = np.mean(actual_prices[i-20:i+1])
-                
-                if short_ma > long_ma:
-                    position = 1.4  # 增加倍數
-                else:
-                    position = 0.6  # 減少倍數
-            else:
-                position = 1.0
-            
-            # 中等波動
-            smooth_noise = np.random.normal(0, 0.006)
-            trend_factor = np.sin(i * 0.05) * 0.004
-            drift_factor = np.cos(i * 0.02) * 0.002
-            
-            strategy_returns[i] = position * base_return * 0.9 + smooth_noise + trend_factor + drift_factor
-        
-    elif strategy_type == 'benchmark':
-        # 基準指數：帶市場波動的買入持有策略
-        strategy_returns = np.zeros(n)
-        
-        for i in range(1, n):
-            base_return = stock_returns[i]
-            
-            # 增加市場額外波動
-            market_noise = np.random.normal(0, 0.008)
-            market_cycle = np.sin(i * 0.12) * 0.006
-            volatility_cluster = np.cos(i * 0.04) * 0.003
-            
-            strategy_returns[i] = base_return + market_noise + market_cycle + volatility_cluster
-            else:
-        strategy_returns = stock_returns.copy()
-    
-    # 計算累積權益曲線（起始值為100）
-    equity_curve = np.zeros(n)
-    equity_curve[0] = 100.0
-    
-    for i in range(1, n):
-        equity_curve[i] = equity_curve[i-1] * (1 + strategy_returns[i])
-    
-    # 放寬範圍限制，允許更大波動
-    equity_curve = np.maximum(equity_curve, 30.0)   # 最低不低於30
-    equity_curve = np.minimum(equity_curve, 500.0)  # 最高不超過500
-    
-    return equity_curve
+        signals = df[signal_col]
+        price = df['Close']
+        returns = price.pct_change().fillna(0)
+        strategy_returns = signals.shift(1).fillna(0) * returns
+        equity_curve = (1 + strategy_returns).cumprod() * 100
+        return equity_curve.values
+    except Exception as e:
+        logger.error(f"生成權益曲線失敗: {e}")
+        return np.full(len(df), 100.0)
 
 def calculate_strategy_metrics(df, strategy_data, selected_strategies):
-    """計算策略表現指標並返回HTML表格"""
+    """
+    用正確的策略回報序列計算績效指標
+    """
     if not selected_strategies:
         return "請選擇至少一個策略來查看表現指標"
     
     metrics_data = []
     for strategy in selected_strategies:
-        if strategy in strategy_data:
+        signal_col = f'{strategy}_signal'
+        if signal_col in df.columns and 'Close' in df.columns:
             try:
-                values = strategy_data[strategy]
-                returns = pd.Series(values).pct_change().dropna()
-                
-                if len(returns) > 0:
-                    annual_return = returns.mean() * 252 * 100
-                    volatility = returns.std() * np.sqrt(252) * 100
-                    sharpe_ratio = returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0
-                    max_drawdown = returns.min() * 100
+                signals = df[signal_col]
+                price = df['Close']
+                returns = price.pct_change().fillna(0)
+                strategy_returns = signals.shift(1).fillna(0) * returns
+                if len(strategy_returns) > 0:
+                    annual_return = (1 + strategy_returns.mean()) ** 252 - 1
+                    volatility = strategy_returns.std() * np.sqrt(252)
+                    sharpe_ratio = annual_return / volatility if volatility > 0 else 0
+                    cumulative = (1 + strategy_returns).cumprod()
+                    rolling_max = cumulative.expanding().max()
+                    drawdown = (cumulative - rolling_max) / rolling_max
+                    max_drawdown = drawdown.min()
                     
                     metrics_data.append({
                         '策略': get_strategy_name(strategy),
-                        '年化收益率': f"{annual_return:.2f}%",
-                        '年化波動率': f"{volatility:.2f}%",
+                        '年化收益率': f"{annual_return*100:.2f}%",
+                        '年化波動率': f"{volatility*100:.2f}%",
                         '夏普比率': f"{sharpe_ratio:.2f}",
-                        '最大回撤': f"{max_drawdown:.2f}%"
+                        '最大回撤': f"{max_drawdown*100:.2f}%"
                     })
             except Exception as e:
                 logger.error(f"計算策略 {strategy} 指標時發生錯誤: {str(e)}")
@@ -486,7 +387,7 @@ def calculate_strategy_metrics(df, strategy_data, selected_strategies):
     if not metrics_data:
         return "無法計算策略表現指標"
     
-    # 創建HTML表格
+    # 生成HTML表格（略，與原本一致）
     table_html = """
     <div style="margin-top: 20px;">
         <h5 style="color: #eee; margin-bottom: 15px;">策略表現指標</h5>
@@ -494,32 +395,25 @@ def calculate_strategy_metrics(df, strategy_data, selected_strategies):
             <thead>
                 <tr style="background-color: #333;">
     """
-    
-    # 表頭
     if metrics_data:
         for key in metrics_data[0].keys():
             table_html += f'<th style="padding: 8px; border: 1px solid #555; text-align: left;">{key}</th>'
-    
     table_html += """
                 </tr>
             </thead>
             <tbody>
     """
-    
-    # 表格內容
     for i, row in enumerate(metrics_data):
         bg_color = "#2d2d2d" if i % 2 == 0 else "#1e1e1e"
         table_html += f'<tr style="background-color: {bg_color};">'
         for value in row.values():
             table_html += f'<td style="padding: 8px; border: 1px solid #555;">{value}</td>'
         table_html += '</tr>'
-    
     table_html += """
             </tbody>
         </table>
     </div>
     """
-    
     return dcc.Markdown(table_html, dangerously_allow_html=True)
 
 def get_strategy_name(strategy):
@@ -528,210 +422,123 @@ def get_strategy_name(strategy):
         'rsi_strategy': 'RSI策略',
         'macd_strategy': 'MACD策略', 
         'ma_strategy': '移動平均策略',
+        'north_south_rsi': '南北水RSI策略',
+        'north_south_macd': '南北水MACD策略',
+        'north_south_momentum': '南北水動量策略',
+        'kdj_strategy': 'KDJ策略',
+        'bollinger_strategy': '布林通道策略',
         'benchmark': '基準指數'
     }
     return names.get(strategy, strategy)
 
-@app.callback(
-    [Output('main-chart', 'figure'),
-     Output('strategy-metrics', 'children'),
-     Output('indicator-chart', 'figure')],
-    [Input('strategy-checklist', 'value'),
-     Input('indicator-checklist', 'value')]
-)
-def update_charts(selected_strategies, selected_indicators):
+# 新增：自動搜尋所有策略時序績效 csv
+def find_strategy_timeseries_csv():
+    csv_files = glob.glob(os.path.join(CSV_PATH, 'integrated_*_2025*.csv'))
+    return csv_files
+
+# 新增：自動讀取所有策略時序績效資料
+STRATEGY_DATA = {}
+for csv_file in find_strategy_timeseries_csv():
     try:
-        logger.info(f"開始更新圖表，選中策略: {selected_strategies}, 選中指標: {selected_indicators}")
-        
-        # 優先使用本地CSV數據
-        df = None
-        csv_file = f"{CSV_PATH}/2800_HK_stock_data.csv"
-        
-        if os.path.exists(csv_file):
-            try:
-                df = pd.read_csv(csv_file)
-                logger.info(f"讀取CSV文件成功，形狀: {df.shape}")
-                logger.info(f"CSV列名: {df.columns.tolist()}")
-                
-                # 設置正確的索引
-                df['Date'] = pd.to_datetime(df['Date'])
-                df.set_index('Date', inplace=True)
-                
-                # 只保留必要的列
-                required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-                available_cols = [col for col in required_cols if col in df.columns]
-                df = df[available_cols].copy()
-                
-                logger.info(f"處理後的數據形狀: {df.shape}")
-                logger.info(f"索引類型: {type(df.index)}, 長度: {len(df.index)}")
-                
-            except Exception as csv_error:
-                logger.error(f"讀取CSV文件失敗: {str(csv_error)}")
-                df = None
-        
-        # 如果CSV讀取失敗，嘗試yfinance
+        df = pd.read_csv(csv_file)
+        # 自動判斷策略名稱
+        base = os.path.basename(csv_file)
+        name = base.replace('integrated_', '').replace('.csv', '').split('_2025')[0]
+        STRATEGY_DATA[name] = df
+    except Exception as e:
+        logger.error(f"讀取 {csv_file} 失敗: {e}")
+
+# 新增：自動生成策略選單
+STRATEGY_CHOICES = []
+for name in STRATEGY_DATA.keys():
+    label = get_strategy_name(name)
+    STRATEGY_CHOICES.append({'label': str(label), 'value': str(name)})
+if not STRATEGY_CHOICES:
+    STRATEGY_CHOICES = [
+        {'label': 'RSI策略', 'value': 'rsi'},
+        {'label': 'MACD策略', 'value': 'macd'},
+        {'label': '布林通道策略', 'value': 'bollinger'},
+        {'label': 'KDJ策略', 'value': 'kdj'},
+        {'label': 'Stochastic策略', 'value': 'stochastic'}
+    ]
+
+@app.callback(
+    Output('main-chart', 'figure'),
+    [Input('strategy-radio', 'value')]
+)
+def update_main_chart(selected_strategy):
+    try:
+        df = STRATEGY_DATA.get(selected_strategy)
         if df is None or len(df) < 10:
-            try:
-                logger.info("嘗試從yfinance獲取數據...")
-                df = yf.download(SYMBOL, start='2023-01-01', end='2025-01-15', progress=False)
-                if df is not None and len(df) > 10:
-                    logger.info(f"yfinance數據形狀: {df.shape}")
-                else:
-                    logger.warning("yfinance數據不足")
-                    df = None
-            except Exception as yf_error:
-                logger.error(f"yfinance獲取數據失敗: {str(yf_error)}")
-                df = None
-        
-        if df is None or len(df) < 10:
-            return {}, "無法獲取有效的股票數據", {}
-            
-        # 計算技術指標
-        try:
-            df = calculate_technical_indicators(df)
-            logger.info(f"技術指標計算完成，數據形狀: {df.shape}")
-        except Exception as tech_error:
-            logger.error(f"計算技術指標失敗: {str(tech_error)}")
-            return {}, f"計算技術指標失敗: {str(tech_error)}", {}
-        
-        # 確保索引為datetime類型
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
-        
-        # 生成策略數據
-        strategy_data = {}
-        strategy_colors = {
-            'rsi_strategy': '#ff6b6b',
-            'macd_strategy': '#4ecdc4', 
-            'ma_strategy': '#45b7d1',
-            'benchmark': '#96ceb4'
-        }
-        
-        # 為每個策略生成數據，確保使用相同的索引
-        all_strategies = ['rsi_strategy', 'macd_strategy', 'ma_strategy', 'benchmark']
-        for strategy in all_strategies:
-            try:
-                strategy_values = generate_strategy_equity_curve(df, strategy)
-                logger.info(f"策略 {strategy} 數據長度: {len(strategy_values)}, DataFrame索引長度: {len(df.index)}")
-                
-                # 確保長度匹配
-                if len(strategy_values) == len(df.index):
-                    strategy_data[strategy] = pd.Series(strategy_values, index=df.index)
-                    logger.info(f"策略 {strategy} 數據創建成功")
-                else:
-                    logger.warning(f"策略 {strategy} 數據長度不匹配，跳過")
-                    
-            except Exception as strategy_error:
-                logger.error(f"生成策略 {strategy} 數據失敗: {str(strategy_error)}")
-        
-        # 主圖表
+            empty_fig = go.Figure()
+            empty_fig.add_annotation(text="找不到該策略的時序績效資料，請確認 csv 結構！", showarrow=False)
+            return empty_fig
+        # 自動判斷欄位
+        date_col = 'Date' if 'Date' in df.columns else df.columns[0]
+        df[date_col] = pd.to_datetime(df[date_col])
+        df.set_index(date_col, inplace=True)
+        # 策略收益曲線
+        y_col = None
+        for c in ['strategy_returns', 'equity', '累積收益', '收益曲線']:
+            if c in df.columns:
+                y_col = c
+                break
+        if y_col is None:
+            # fallback: 用 Close 畫價格
+            y_col = 'Close' if 'Close' in df.columns else df.columns[1]
         main_fig = go.Figure()
-        
-        # 添加原始股價權益曲線（標準化為100起始）
-        normalized_stock_price = (df['Close'] / df['Close'].iloc[0]) * 100
         main_fig.add_trace(go.Scatter(
             x=df.index,
-            y=normalized_stock_price,
-                    mode='lines',
-            name='股價',
-            line=dict(color='#ffffff', width=2)
-        ))
-        
-        # 根據選擇的策略添加曲線
-        if selected_strategies and strategy_data:
-            for strategy in selected_strategies:
-                if strategy in strategy_data:
-                    try:
-                        main_fig.add_trace(go.Scatter(
-                            x=df.index,
-                            y=strategy_data[strategy],
-                            mode='lines',
-                            name=get_strategy_name(strategy),
-                            line=dict(color=strategy_colors.get(strategy, '#ffffff'), width=2)
-                        ))
-                        logger.info(f"已添加策略曲線: {strategy}")
-                    except Exception as plot_error:
-                        logger.error(f"添加策略 {strategy} 曲線失敗: {str(plot_error)}")
-        
+            y=df[y_col],
+                mode='lines',
+                name='策略收益',
+                line=dict(color='#ff9800', width=2)
+            ))
         main_fig.update_layout(
-            title="多策略權益曲線比較 (基準值=100)",
+            title=f"{get_strategy_name(selected_strategy)} 收益曲線",
             xaxis_title="日期",
-            yaxis_title="權益曲線指數",
+            yaxis_title="收益/權益/價格",
             template="plotly_dark",
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(color='white'),
-            height=400
+            height=500
         )
-        
-        # 技術指標圖表
-        indicator_fig = make_subplots(
-            rows=3, cols=1,
-            subplot_titles=("RSI", "MACD", "成交量"),
-            vertical_spacing=0.1,
-            specs=[[{"secondary_y": False}],
-                   [{"secondary_y": False}],
-                   [{"secondary_y": False}]]
-        )
-        
-        # 添加選中的技術指標
-        if selected_indicators:
-            # RSI
-            if 'rsi' in selected_indicators and 'RSI' in df.columns:
-                indicator_fig.add_trace(
-                    go.Scatter(x=df.index, y=df['RSI'], name="RSI", line=dict(color='#ff4444')),
-                    row=1, col=1
-                )
-                # RSI的超買超賣線
-                for i, rsi_level in enumerate([70, 30]):
-                    color = "red" if rsi_level == 70 else "green"
-                    indicator_fig.add_shape(
-                        type="line",
-                        x0=df.index[0], x1=df.index[-1],
-                        y0=rsi_level, y1=rsi_level,
-                        line=dict(color=color, dash="dash"),
-                        row=1, col=1
-                    )
-            
-            # MACD
-            if 'macd' in selected_indicators and 'MACD' in df.columns:
-                indicator_fig.add_trace(
-                    go.Scatter(x=df.index, y=df['MACD'], name="MACD", line=dict(color='#4ecdc4')),
-                    row=2, col=1
-                )
-                if 'Signal_Line' in df.columns:
-                    indicator_fig.add_trace(
-                        go.Scatter(x=df.index, y=df['Signal_Line'], name="Signal", line=dict(color='#ff6b6b')),
-                        row=2, col=1
-                    )
-            
-            # 成交量
-            if 'volume' in selected_indicators:
-                indicator_fig.add_trace(
-                    go.Bar(x=df.index, y=df['Volume'], name="成交量", marker_color='#45b7d1'),
-                    row=3, col=1
-                )
-        
-        indicator_fig.update_layout(
-            template="plotly_dark",
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='white'),
-            height=600,
-            showlegend=True
-        )
-        
-        # 計算策略表現指標
-        metrics_html = calculate_strategy_metrics(df, strategy_data, selected_strategies)
-        
-        logger.info("圖表更新完成")
-        return main_fig, metrics_html, indicator_fig
-        
+        return main_fig
     except Exception as e:
-        logger.error(f"更新圖表時發生錯誤: {str(e)}")
-        import traceback
-        logger.error(f"錯誤詳情: {traceback.format_exc()}")
-        return {}, f"更新圖表時發生錯誤: {str(e)}", {}
+        logger.error(f"update_main_chart 發生未預期錯誤: {str(e)}")
+        empty_fig = go.Figure()
+        empty_fig.add_annotation(text="策略資料讀取錯誤，請檢查 csv 結構！", showarrow=False)
+        return empty_fig
+
+def load_signal_params():
+    params_path = "signal_params.json"
+    try:
+        with open(params_path, 'r', encoding='utf-8') as f:
+            params = json.load(f)
+        return params
+    except Exception:
+        return {}
+
+params = load_signal_params()
+
+def get_strategy_param_text(selected_strategy):
+    mapping = {
+        'rsi_strategy': 'rsi',
+        'rsi_ultimate': 'rsi_ultimate',
+        'macd_strategy': 'macd',
+        'bollinger_strategy': 'bollinger',
+        'kdj_strategy': 'kdj',
+        'stochastic_mil8': 'stochastic',
+        'combined_strategy': 'combined'
+    }
+    key = mapping.get(selected_strategy)
+    if key and key in params:
+        p = params[key]
+        # 支援 period, overbought, oversold, 其他參數
+        param_str = ', '.join([f"{k}={v}" for k, v in p.items()])
+        return f"參數：{param_str}"
+    return "參數：無"
 
 # 定義布局
 app.layout = html.Div([
@@ -750,29 +557,18 @@ app.layout = html.Div([
     # 側邊欄
     html.Div([
         html.H5("策略選擇", style={'marginBottom': '20px', 'fontSize': '18px', 'fontWeight': '500', 'color': '#eee'}),
-        dcc.Checklist(
-            id='strategy-checklist',
+        dcc.RadioItems(
+            id='strategy-radio',
             options=[
-                {'label': ' RSI策略', 'value': 'rsi_strategy'},
-                {'label': ' MACD策略', 'value': 'macd_strategy'},
-                {'label': ' 移動平均策略', 'value': 'ma_strategy'},
-                {'label': ' 基準指數', 'value': 'benchmark'}
+                {'label': '■ RSI(快速體園)', 'value': 'rsi_strategy'},
+                {'label': '■ RSI(終極商洞)', 'value': 'rsi_ultimate'},
+                {'label': '■ FI MACD 策略', 'value': 'macd_strategy'},
+                {'label': '■ 布林帶策略', 'value': 'bollinger_strategy'},
+                {'label': '■ KDJ 策略', 'value': 'kdj_strategy'},
+                {'label': '■ Stochastic mil8', 'value': 'stochastic_mil8'},
+                {'label': '■ 事策略統合', 'value': 'combined_strategy'}
             ],
-            value=['rsi_strategy', 'macd_strategy'],
-            style=CHECKLIST_STYLE,
-            labelStyle={'display': 'block', 'marginBottom': '8px', 'cursor': 'pointer'}
-        ),
-        html.Hr(style={'borderColor': '#555', 'margin': '20px 0'}),
-                        html.H5("策略表現", style={'marginBottom': '20px', 'fontSize': '18px', 'fontWeight': '500', 'color': '#eee'}),
-        dcc.Checklist(
-            id='indicator-checklist',
-            options=[
-                {'label': ' RSI', 'value': 'rsi'},
-                {'label': ' MACD', 'value': 'macd'},
-                {'label': ' KDJ', 'value': 'kdj'},
-                {'label': ' 移動平均線', 'value': 'ma'}
-            ],
-            value=['rsi', 'macd'],
+            value='kdj_strategy',
             style=CHECKLIST_STYLE,
             labelStyle={'display': 'block', 'marginBottom': '8px', 'cursor': 'pointer'}
         )
@@ -780,31 +576,36 @@ app.layout = html.Div([
     
     # 主要內容區域
     html.Div([
+        # 參數顯示區塊
+        html.Div(id='strategy-param-info', style={'color': '#ffeb3b', 'marginBottom': '10px'}),
         # 主圖表
         html.Div([
             dcc.Graph(id='main-chart', style={'height': '500px'})
-        ], style={'marginBottom': '30px'}),
-        
-        # 策略表現統計
-        html.Div([
-            html.H4("策略表現統計", style={'marginBottom': '20px', 'color': '#ffffff'}),
-            html.Div(id='strategy-metrics', style=TABLE_STYLE)
-        ], style={'marginBottom': '30px'}),
-        
-        # 技術指標圖表
-        html.Div([
-            dcc.Graph(id='indicator-chart', style={'height': '300px'})
-        ])
+        ], style={'marginBottom': '30px'})
     ], style=CONTENT_STYLE)
 ], style=CUSTOM_STYLE)
 
-# 主程序
-if __name__ == '__main__':
-    try:
-        ensure_directories()
-        logger.info("啟動應用程序")
-        app.run_server(debug=False, host='127.0.0.1', port=8051)
-    except Exception as e:
-        logger.error(f"應用程序啟動失敗: {str(e)}")
-        logger.debug(f"詳細錯誤信息: {traceback.format_exc()}")
-        raise 
+@app.callback(
+    Output('strategy-param-info', 'children'),
+    [Input('strategy-radio', 'value')]
+)
+def update_param_info(selected_strategy):
+    params = load_signal_params()
+    mapping = {
+        'rsi_strategy': 'rsi',
+        'rsi_ultimate': 'rsi_ultimate',
+        'macd_strategy': 'macd',
+        'bollinger_strategy': 'bollinger',
+        'kdj_strategy': 'kdj',
+        'stochastic_mil8': 'stochastic',
+        'combined_strategy': 'combined'
+    }
+    key = mapping.get(selected_strategy)
+    if key and key in params:
+        p = params[key]
+        param_str = ', '.join([f"{k}={v}" for k, v in p.items()])
+        return f"參數：{param_str}"
+    return "參數：無"
+
+if __name__ == "__main__":
+    app.run(debug=True, port=8050) 

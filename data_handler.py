@@ -3,7 +3,7 @@
 包含數據獲取、技術指標計算、數據清理等功能
 """
 
-import yfinance as yf
+import akshare as ak
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -13,9 +13,15 @@ from typing import Optional, Dict, List, Tuple, Union, Any, cast
 import warnings
 from config import logger
 import time
+import logging
+import ssl
+import urllib3
+import os
 
 # 忽略警告
 warnings.filterwarnings('ignore')
+# 忽略SSL驗證警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def format_date_safely(date_value: Any) -> Optional[str]:
     """安全地格式化日期值"""
@@ -31,74 +37,62 @@ def format_date_safely(date_value: Any) -> Optional[str]:
 class DataFetcher:
     """數據獲取器"""
     
-    @staticmethod
-    def get_yahoo_finance_data(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
-        """
-        使用 Yahoo Finance API 獲取股票數據
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.data_dir = "data"
+        os.makedirs(self.data_dir, exist_ok=True)
         
-        Args:
-            symbol: 股票代碼
-            start_date: 開始日期 (YYYY-MM-DD)
-            end_date: 結束日期 (YYYY-MM-DD)
-            
-        Returns:
-            股票數據DataFrame
-        """
+    def get_stock_file_path(self, symbol: str) -> str:
+        """獲取股票數據文件路徑"""
+        return os.path.join(self.data_dir, f"{symbol}.csv")
+        
+    def download_stock_data(self, symbol: str, start_date: str, end_date: str) -> None:
+        """下載股票數據並保存為CSV"""
         try:
-            # 轉換日期為時間戳
-            start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
-            end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
+            # 使用akshare下載港股數據
+            data = ak.stock_hk_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date)
             
-            # 構建 Yahoo Finance API URL
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-            params = {
-                "period1": start_ts,
-                "period2": end_ts,
-                "interval": "1d",
-                "events": "history",
-                "includeAdjustedClose": True
-            }
-            
-            # 發送請求（設置超時）
-            headers = {
-                'User-Agent': 'Mozilla/5.0',
-                'Accept': 'application/json',
-                'Accept-Encoding': 'gzip, deflate'
-            }
-            response = requests.get(url, params=params, headers=headers, timeout=30)
-            data = response.json()
-            
-            # 解析數據
-            if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
-                result = data['chart']['result'][0]
-                timestamps = result['timestamp']
-                quote = result['indicators']['quote'][0]
+            if data.empty:
+                raise ValueError(f"無法獲取 {symbol} 的數據")
                 
-                # 創建 DataFrame
-                df = pd.DataFrame({
-                    'Open': quote.get('open', []),
-                    'High': quote.get('high', []),
-                    'Low': quote.get('low', []),
-                    'Close': quote.get('close', []),
-                    'Volume': quote.get('volume', [])
-                }, index=pd.to_datetime([datetime.fromtimestamp(x) for x in timestamps]))
-                
-                # 清理數據
-                df = DataFetcher._clean_data(df)
-                
-                if not df.empty:
-                    logger.info(f"✅ 成功從 Yahoo Finance API 獲取 {len(df)} 天的數據")
-                    return df
-                    
-            logger.error("❌ Yahoo Finance API 返回的數據格式不正確")
-            return None
+            # 重命名列
+            data = data.rename(columns={
+                '日期': 'date',
+                '開盤': 'open',
+                '最高': 'high',
+                '最低': 'low',
+                '收盤': 'close',
+                '成交量': 'volume'
+            })
             
-        except requests.Timeout:
-            logger.error("❌ Yahoo Finance API 請求超時")
-            return None
+            # 將日期列轉換為datetime
+            data['date'] = pd.to_datetime(data['date'])
+            
+            # 保存數據
+            file_path = self.get_stock_file_path(symbol)
+            data.to_csv(file_path, index=False)
+            
+            self.logger.info(f"✅ 成功下載並保存 {symbol} 數據: {len(data)} 天")
+            
         except Exception as e:
-            logger.error(f"❌ 從 Yahoo Finance API 獲取數據失敗: {e}")
-            return None
+            self.logger.error(f"❌ 下載 {symbol} 數據失敗: {str(e)}")
+            raise
+            
+    def read_stock_data(self, symbol: str) -> pd.DataFrame:
+        """從CSV讀取股票數據"""
+        try:
+            file_path = self.get_stock_file_path(symbol)
+            data = pd.read_csv(file_path)
+            
+            # 將日期列轉換為datetime
+            data['date'] = pd.to_datetime(data['date'])
+            
+            self.logger.info(f"✅ 從CSV讀取 {symbol} 數據: {len(data)} 天")
+            return data
+            
+        except Exception as e:
+            self.logger.error(f"❌ 讀取 {symbol} 數據失敗: {str(e)}")
+            raise
 
     @staticmethod
     def get_northbound_data(symbol: str = "2800.HK", 
@@ -138,6 +132,9 @@ class DataFetcher:
             })
             
             northbound_data.set_index('Date', inplace=True)
+            
+            # 添加 north_flow 列（使用淨買入金額除以持倉金額的比例）
+            northbound_data['north_flow'] = northbound_data['Northbound_Net_Buy'] / northbound_data['Northbound_Holdings']
             
             logger.info(f"✅ 成功獲取 {len(northbound_data)} 天的北水數據")
             return northbound_data
@@ -220,6 +217,96 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"數據合併失敗: {e}")
             return stock_data
+
+    def get_yahoo_finance_data(self, symbol: str, start_date: str, end_date: str, retries: int = 3) -> pd.DataFrame:
+        """
+        直接從Yahoo Finance API獲取數據，與 main.py 的 get_stock_data_direct 一致
+        Args:
+            symbol: 股票代碼（如 2800.HK）
+            start_date: 開始日期（YYYY-MM-DD）
+            end_date: 結束日期（YYYY-MM-DD）
+            retries: 重試次數
+        Returns:
+            pd.DataFrame 或 None
+        """
+        import requests
+        import time
+        import pandas as pd
+        from datetime import datetime
+        import pytz
+        hk_tz = pytz.timezone('Asia/Hong_Kong')
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d').replace(tzinfo=hk_tz)
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(tzinfo=hk_tz)
+        except Exception as e:
+            self.logger.error(f"❌ 日期格式錯誤: {e}")
+            return None
+        base_url = "https://query1.finance.yahoo.com/v8/finance/chart/"
+        start_timestamp = int(start_dt.timestamp())
+        end_timestamp = int(end_dt.timestamp())
+        url = f"{base_url}{symbol}?period1={start_timestamp}&period2={end_timestamp}&interval=1d"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        for attempt in range(retries):
+            try:
+                response = requests.get(url, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
+                    result = data['chart']['result'][0]
+                    timestamps = result['timestamp']
+                    quotes = result['indicators']['quote'][0]
+                    df = pd.DataFrame({
+                        'open': quotes.get('open', []),
+                        'high': quotes.get('high', []),
+                        'low': quotes.get('low', []),
+                        'close': quotes.get('close', []),
+                        'volume': quotes.get('volume', [])
+                    }, index=pd.to_datetime(timestamps, unit='s'))
+                    return df
+                return None
+            except requests.exceptions.RequestException as e:
+                if attempt < retries - 1:
+                    self.logger.warning(f"請求失敗，正在重試... ({attempt + 1}/{retries})")
+                    time.sleep(2 ** attempt)
+                else:
+                    self.logger.error(f"無法獲取數據: {str(e)}")
+                    return None
+            except Exception as e:
+                self.logger.error(f"處理數據時出錯: {str(e)}")
+                return None
+    def fetch_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        通用數據獲取接口，供 UnifiedStrategyOptimizer 使用。
+        內部調用 get_yahoo_finance_data，並自動標準化欄位。
+        """
+        df = self.get_yahoo_finance_data(symbol, start_date, end_date)
+        if df is None or df.empty:
+            self.logger.error(f"❌ fetch_data: 無法獲取 {symbol} 數據，日期: {start_date}~{end_date}")
+            return None
+        # 標準化欄位名稱
+        df = df.rename(columns={
+            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume',
+            'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume'
+        })
+        # 將 index 轉為 date 欄位
+        if 'date' not in df.columns:
+            df = df.reset_index().rename(columns={'index': 'date'})
+        # 確保所有欄位小寫
+        df.columns = [str(col).lower() for col in df.columns]
+        # 日誌：輸出欄位、shape、前幾行
+        self.logger.info(f"fetch_data: {symbol} 數據 shape={df.shape}, columns={list(df.columns)}")
+        self.logger.info(f"fetch_data: {symbol} head={df.head(3)}")
+        # 只檢查 close 欄位空值，允許其他欄位有小量空值
+        if df['close'].isnull().sum() > 0:
+            self.logger.warning(f"fetch_data: {symbol} 有 {df['close'].isnull().sum()} 個 close 空值，將移除")
+            df = df.dropna(subset=['close'])
+        if df.empty:
+            self.logger.error(f"❌ fetch_data: {symbol} 處理後數據為空，放棄")
+            return None
+        return df
+
 
 class TechnicalIndicators:
     """技術指標計算器"""

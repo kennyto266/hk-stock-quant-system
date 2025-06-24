@@ -20,12 +20,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Union
 import warnings
 import yfinance as yf
+from multiprocessing import Pool, cpu_count
 warnings.filterwarnings('ignore')
 from north_south_flow_integration import NorthSouthFlowIntegration
 
 class NorthSouthFlowOptimization:
     def __init__(self):
         self.integration = NorthSouthFlowIntegration()
+        self.max_processes = min(32, cpu_count())  # 限制最大進程數
         
     def optimize_strategy_parameters(self):
         """優化南北水策略參數"""
@@ -73,99 +75,110 @@ class NorthSouthFlowOptimization:
             print("❌ 無法完成策略參數優化")
             return None
             
-    def optimize_rsi_parameters(self, df):
-        """優化RSI策略參數"""
-        best_sharpe = -np.inf
-        best_params = None
-        best_returns = None
+    def _evaluate_rsi_params(self, args):
+        """評估單個RSI參數組合"""
+        df, period, ob, os = args
+        if ob <= os:  # 超買閾值必須大於超賣閾值
+            return None
+            
+        # 計算RSI
+        prices = df['total_turnover']
+        rsi = self.calculate_rsi(prices, period)
         
-        # RSI參數範圍
-        periods = range(10, 21, 2)  # RSI週期：10-20天
-        overbought = range(65, 81, 5)  # 超買閾值：65-80
-        oversold = range(20, 36, 5)  # 超賣閾值：20-35
+        # 生成交易信號
+        signals = pd.Series(0, index=df.index)
+        signals[rsi < os] = 1  # 買入信號
+        signals[rsi > ob] = -1  # 賣出信號
         
-        for period in periods:
-            for ob in overbought:
-                for os in oversold:
-                    if ob <= os:  # 超買閾值必須大於超賣閾值
-                        continue
-                        
-                    # 計算RSI
-                    prices = df['total_turnover']
-                    rsi = self.calculate_rsi(prices, period)
-                    
-                    # 生成交易信號
-                    signals = pd.Series(0, index=df.index)
-                    signals[rsi < os] = 1  # 買入信號
-                    signals[rsi > ob] = -1  # 賣出信號
-                    
-                    # 計算策略收益
-                    returns = self.calculate_strategy_returns(df, signals)
-                    if returns is not None:
-                        sharpe = self.calculate_sharpe_ratio(returns)
-                        if sharpe > best_sharpe:
-                            best_sharpe = sharpe
-                            best_params = {
-                                'period': period,
-                                'overbought': ob,
-                                'oversold': os
-                            }
-                            best_returns = returns
-        
-        if best_params:
+        # 計算策略收益
+        returns = self.calculate_strategy_returns(df, signals)
+        if returns is not None:
+            sharpe = self.calculate_sharpe_ratio(returns)
             return {
-                **best_params,
-                'sharpe_ratio': best_sharpe,
-                'annual_return': np.mean(best_returns) * 252,
-                'max_drawdown': self.calculate_max_drawdown(best_returns)
+                'period': period,
+                'overbought': ob,
+                'oversold': os,
+                'sharpe_ratio': sharpe,
+                'annual_return': np.mean(returns) * 252,
+                'max_drawdown': self.calculate_max_drawdown(returns)
+            }
+        return None
+            
+    def optimize_rsi_parameters(self, df):
+        """使用多進程優化RSI策略參數"""
+        # RSI參數範圍
+        periods = range(10, 21, 1)  # RSI週期：10-20天
+        overbought = range(65, 81, 1)  # 超買閾值：65-80
+        oversold = range(20, 36, 1)  # 超賣閾值：20-35
+        
+        # 準備參數組合
+        param_combinations = [(df, p, ob, os) 
+                            for p in periods 
+                            for ob in overbought 
+                            for os in oversold]
+        
+        # 使用多進程進行參數優化
+        with Pool(processes=self.max_processes) as pool:
+            results = pool.map(self._evaluate_rsi_params, param_combinations)
+        
+        # 過濾有效結果並找出最佳參數
+        valid_results = [r for r in results if r is not None]
+        if valid_results:
+            best_result = max(valid_results, key=lambda x: x['sharpe_ratio'])
+            return best_result
+        return None
+        
+    def _evaluate_macd_params(self, args):
+        """評估單個MACD參數組合"""
+        df, fast, slow, signal = args
+        if fast >= slow:  # 快線週期必須小於慢線週期
+            return None
+            
+        # 計算MACD
+        prices = df['total_turnover']
+        macd_line, signal_line, _ = self.calculate_macd(prices, fast, slow, signal)
+        
+        # 生成交易信號
+        signals = pd.Series(0, index=df.index)
+        signals[(macd_line > signal_line) & (macd_line.shift(1) <= signal_line.shift(1))] = 1  # 金叉買入
+        signals[(macd_line < signal_line) & (macd_line.shift(1) >= signal_line.shift(1))] = -1  # 死叉賣出
+        
+        # 計算策略收益
+        returns = self.calculate_strategy_returns(df, signals)
+        if returns is not None:
+            sharpe = self.calculate_sharpe_ratio(returns)
+            return {
+                'fast_period': fast,
+                'slow_period': slow,
+                'signal_period': signal,
+                'sharpe_ratio': sharpe,
+                'annual_return': np.mean(returns) * 252,
+                'max_drawdown': self.calculate_max_drawdown(returns)
             }
         return None
         
     def optimize_macd_parameters(self, df):
-        """優化MACD策略參數"""
-        best_sharpe = -np.inf
-        best_params = None
-        best_returns = None
-        
+        """使用多進程優化MACD策略參數"""
         # MACD參數範圍
-        fast_periods = range(8, 15, 2)  # 快線：8-14天
-        slow_periods = range(20, 31, 5)  # 慢線：20-30天
-        signal_periods = range(7, 12, 2)  # 信號線：7-11天
+        fast_periods = range(8, 15, 1)  # 快線：8-14天
+        slow_periods = range(20, 31, 1)  # 慢線：20-30天
+        signal_periods = range(7, 12, 1)  # 信號線：7-11天
         
-        for fast in fast_periods:
-            for slow in slow_periods:
-                if fast >= slow:  # 快線週期必須小於慢線週期
-                    continue
-                for signal in signal_periods:
-                    # 計算MACD
-                    prices = df['total_turnover']
-                    macd_line, signal_line, _ = self.calculate_macd(prices, fast, slow, signal)
-                    
-                    # 生成交易信號
-                    signals = pd.Series(0, index=df.index)
-                    signals[(macd_line > signal_line) & (macd_line.shift(1) <= signal_line.shift(1))] = 1  # 金叉買入
-                    signals[(macd_line < signal_line) & (macd_line.shift(1) >= signal_line.shift(1))] = -1  # 死叉賣出
-                    
-                    # 計算策略收益
-                    returns = self.calculate_strategy_returns(df, signals)
-                    if returns is not None:
-                        sharpe = self.calculate_sharpe_ratio(returns)
-                        if sharpe > best_sharpe:
-                            best_sharpe = sharpe
-                            best_params = {
-                                'fast_period': fast,
-                                'slow_period': slow,
-                                'signal_period': signal
-                            }
-                            best_returns = returns
+        # 準備參數組合
+        param_combinations = [(df, fast, slow, signal) 
+                            for fast in fast_periods 
+                            for slow in slow_periods 
+                            for signal in signal_periods]
         
-        if best_params:
-            return {
-                **best_params,
-                'sharpe_ratio': best_sharpe,
-                'annual_return': np.mean(best_returns) * 252,
-                'max_drawdown': self.calculate_max_drawdown(best_returns)
-            }
+        # 使用多進程進行參數優化
+        with Pool(processes=self.max_processes) as pool:
+            results = pool.map(self._evaluate_macd_params, param_combinations)
+        
+        # 過濾有效結果並找出最佳參數
+        valid_results = [r for r in results if r is not None]
+        if valid_results:
+            best_result = max(valid_results, key=lambda x: x['sharpe_ratio'])
+            return best_result
         return None
     
     def calculate_rsi(self, prices, period=14):
