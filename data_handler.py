@@ -31,7 +31,8 @@ def format_date_safely(date_value: Any) -> Optional[str]:
         if isinstance(date_value, (datetime, pd.Timestamp)):
             return date_value.strftime('%Y-%m-%d')
         return None
-    except:
+    except Exception as e:
+        logger.error(f"日期格式化失敗: {e}")
         return None
 
 class DataFetcher:

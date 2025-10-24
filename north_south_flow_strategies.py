@@ -82,7 +82,8 @@ class NorthSouthFlowStrategies:
                 file_date = datetime.strptime(f[:8], '%Y%m%d').date()
                 if start_date <= file_date <= end_date:
                     filtered_files.append(f)
-            except:
+            except Exception as e:
+                print(f"⚠️ 解析文件名 {f} 日期時出錯: {str(e)}")
                 continue
         
         if not filtered_files:
