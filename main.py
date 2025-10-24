@@ -133,11 +133,9 @@ def launch_rsi_dashboard():
 
 def launch_dashboard():
     print("啟動新版 Modern Dashboard...")
-    import sys
     subprocess.Popen([sys.executable, "modern_dashboard.py"])
 
 if __name__ == "__main__":
-    import sys
     if len(sys.argv) > 1:
         # 有股票代號參數，僅回測該股票，不啟動 dashboard
         stock_code = sys.argv[1]

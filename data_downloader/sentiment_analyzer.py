@@ -309,7 +309,8 @@ class MarketSentimentAnalyzer:
                         if future_date in forward_returns.index:
                             ret = forward_returns.loc[future_date]
                             buy_returns.append(ret)
-                    except:
+                    except Exception as e:
+                        logger.warning(f"處理買入信號時出錯: {e}")
                         continue
                 
                 if buy_returns:
@@ -328,7 +329,8 @@ class MarketSentimentAnalyzer:
                         if future_date in forward_returns.index:
                             ret = -forward_returns.loc[future_date]  # 做空收益
                             sell_returns.append(ret)
-                    except:
+                    except Exception as e:
+                        logger.warning(f"處理賣出信號時出錯: {e}")
                         continue
                 
                 if sell_returns:

@@ -3483,8 +3483,8 @@ def create_plotly_dashboard(strategy_results, data):
             import webbrowser
             webbrowser.open('http://localhost:8051')
             print("🌐 已自動在瀏覽器中打開 Dash Dashboard")
-        except:
-            print("❌ 無法自動打開瀏覽器，請手動訪問 http://localhost:8051")
+        except Exception as e:
+            print(f"❌ 無法自動打開瀏覽器: {e}，請手動訪問 http://localhost:8051")
         
         print("✅ Plotly Dash Dashboard 已成功啟動在 localhost:8051")
         return app
@@ -3514,7 +3514,8 @@ def main():
         start_date = pd.to_datetime(data.index[0]).strftime('%Y-%m-%d')
         end_date = pd.to_datetime(data.index[-1]).strftime('%Y-%m-%d')
         print(f"📊 數據期間：{start_date} 至 {end_date}")
-    except:
+    except Exception as e:
+        print(f"⚠️ 日期格式化錯誤: {e}")
         print(f"📊 數據期間：{str(data.index[0])[:10]} 至 {str(data.index[-1])[:10]}")
     
     # 計算技術指標
@@ -3703,8 +3704,8 @@ def main():
     try:
         webbrowser.open(f'file://{os.path.abspath(dashboard_filename)}')
         print("🌐 Dashboard已在瀏覽器中打開")
-    except:
-        print("❌ 無法自動打開瀏覽器")
+    except Exception as e:
+        print(f"❌ 無法自動打開瀏覽器: {e}")
     
     # 驗證夏普比率計算
     verify_sharpe_ratio_calculations(strategy_results, data)
