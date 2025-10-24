@@ -3,7 +3,13 @@
 包含數據獲取、技術指標計算、數據清理等功能
 """
 
-import akshare as ak
+try:
+    import akshare as ak
+    AKSHARE_AVAILABLE = True
+except ImportError:
+    AKSHARE_AVAILABLE = False
+    print("⚠️ akshare 未安裝，將使用 Yahoo Finance 作為數據源")
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -50,8 +56,14 @@ class DataFetcher:
     def download_stock_data(self, symbol: str, start_date: str, end_date: str) -> None:
         """下載股票數據並保存為CSV"""
         try:
-            # 使用akshare下載港股數據
-            data = ak.stock_hk_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date)
+            if not AKSHARE_AVAILABLE:
+                self.logger.warning("akshare 不可用，改用 Yahoo Finance")
+                data = self.get_yahoo_finance_data(symbol, start_date, end_date)
+                if data is None or data.empty:
+                    raise ValueError(f"無法從 Yahoo Finance 獲取 {symbol} 的數據")
+            else:
+                # 使用akshare下載港股數據
+                data = ak.stock_hk_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date)
             
             if data.empty:
                 raise ValueError(f"無法獲取 {symbol} 的數據")
